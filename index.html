@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSSS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* カスタムスタイル */
+        .drop-area-active {
+            border-color: #3b82f6; /* Tailwind blue-500 */
+            background-color: #eff6ff; /* Tailwind blue-100 */
+        }
+        #mainCanvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 0.375rem; /* rounded-md */
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #3b82f6; /* Tailwind blue-500 */
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col items-center justify-start p-4 selection:bg-blue-200 selection:text-blue-800">
+
+    <div class="w-full max-w-2xl bg-white p-6 sm:p-8 rounded-xl shadow-xl mt-5">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">くしゃみ・サムネ・生成・SYSTEM</h1>
+            <p class="text-gray-500 mt-2">くしゃみ先生のサムネイル風画像を生成します。</p>
+        </header>
+
+        <div id="dropArea" class="mb-6 p-8 sm:p-12 border-2 border-dashed border-gray-300 rounded-lg text-center cursor-pointer transition-all duration-300 ease-in-out hover:border-blue-400 hover:bg-blue-50">
+            <input type="file" id="fileInput" multiple accept="image/*" class="hidden">
+            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="mt-4 text-sm text-gray-600">
+                画像をドロップ、またはクリック<br class="sm:hidden"><span class="font-semibold text-blue-600"><br>クリックして選択</span>
+            </p>
+        </div>
+
+        <div id="statusMessage" class="mb-4 text-center text-sm text-gray-600 min-h-[20px]"></div>
+        <div id="loadingIndicator" class="hidden flex justify-center items-center mb-4">
+            <div class="spinner"></div>
+            <p class="ml-3 text-gray-600">処理中...</p>
+        </div>
+
+        <div id="canvasContainer" class="hidden mt-6 p-2 border border-gray-300 rounded-lg bg-gray-50 shadow-inner">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+
+        <div id="actionButtonsContainer" class="mt-8 space-y-4">
+            <button id="downloadButton" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition-colors duration-300 ease-in-out hidden">
+                画像をダウンロード
+            </button>
+            <button id="uploadMoreButton" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-75 transition-colors duration-300 ease-in-out hidden">
+                リセット
+            </button>
+        </div>
+    </div>
+
+	<!-- スペーサー -->
+	<div class="h-20"></div>
+    <!-- フッター -->
+	<footer class="fixed bottom-0 left-0 right-0 bg-gray-700 text-white p-3 shadow-lg">
+		<div class="container mx-auto max-w-2xl">
+			<div class="text-left">
+				<p class="mb-1 text-sm"><a href="name.html">タイプ違い（名前あり）：https://example.com</a></p>
+				<p class="mb-1 text-sm">・元ネタ</p>
+				<p class="mb-1 text-sm"><a href="https://www.youtube.com/@くしゃみィ" target="_blank">YouTube：https://www.youtube.com/@くしゃみィ</a></p>
+				<p class="mb-1 text-sm"><a href="https://x.com/asarizip" target="_blank">Twitter：https://x.com/asarizip</a></p>
+			</div>
+		</div>
+	</footer>
+
+    <script>
+        // --- グローバル定数: 切り取り範囲のパラメータ ---
+        const CROP_PARAMETERS = [
+            { name: "small_inset_crop", sourceXRatio: 0.09, sourceYRatio: 0.26, widthRatio: 0.095, heightRatio: 0.08 },
+            { name: "bottom_strip_base", sourceXRatio: 0.0, sourceYRatio: 0.73, widthRatio: 1.0, heightRatio: 0.13 }
+        ];
+
+        // --- DOM要素取得 ---
+        const dropArea = document.getElementById('dropArea');
+        const fileInput = document.getElementById('fileInput');
+        const mainCanvas = document.getElementById('mainCanvas');
+        const mainCtx = mainCanvas.getContext('2d');
+        const downloadButton = document.getElementById('downloadButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const canvasContainer = document.getElementById('canvasContainer');
+        const uploadMoreButton = document.getElementById('uploadMoreButton'); // 新しいボタン
+        const actionButtonsContainer = document.getElementById('actionButtonsContainer');
+
+
+        let processedImages = [];
+
+        // --- イベントリスナー ---
+        dropArea.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (event) => {
+            handleFiles(event.target.files);
+            fileInput.value = '';
+        });
+
+        dropArea.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            dropArea.classList.add('drop-area-active');
+        });
+
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('drop-area-active');
+        });
+
+        dropArea.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropArea.classList.remove('drop-area-active');
+            handleFiles(event.dataTransfer.files);
+        });
+
+        downloadButton.addEventListener('click', () => {
+            const dataURL = mainCanvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = dataURL;
+            link.download = 'サムネイル画像.png';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            statusMessage.textContent = '画像をダウンロードしました。';
+        });
+
+        uploadMoreButton.addEventListener('click', () => {
+            // UIを初期状態に戻す
+            canvasContainer.classList.add('hidden');
+            downloadButton.classList.add('hidden');
+            uploadMoreButton.classList.add('hidden');
+            actionButtonsContainer.classList.add('hidden'); // Hide the whole container for buttons
+
+            dropArea.classList.remove('hidden');
+            mainCanvas.width = 0;
+            mainCanvas.height = 0;
+            processedImages = [];
+            fileInput.value = ''; // inputをリセット
+            statusMessage.textContent = '画像をアップロードしてください。';
+        });
+
+
+        // --- コア機能 ---
+        async function handleFiles(files) {
+            if (files.length === 0) {
+                statusMessage.textContent = 'ファイルが選択されていません。';
+                return;
+            }
+
+            // 初期化処理
+            processedImages = [];
+            canvasContainer.classList.add('hidden');
+            downloadButton.classList.add('hidden');
+            uploadMoreButton.classList.add('hidden');
+            actionButtonsContainer.classList.add('hidden');
+            dropArea.classList.remove('hidden'); // 念のため表示
+
+            mainCanvas.width = 0;
+            mainCanvas.height = 0;
+            statusMessage.textContent = `画像を読み込み中 (0/${files.length})...`;
+            loadingIndicator.classList.remove('hidden');
+
+            const filePromises = Array.from(files).map((file, index) => {
+                return new Promise((resolve, reject) => {
+                    if (!file.type.startsWith('image/')) {
+                        console.warn(`画像ファイルではないためスキップ: ${file.name}`);
+                        resolve(null);
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = async () => {
+                            try {
+                                const processedCanvas = await processSingleImage(img);
+                                statusMessage.textContent = `画像を処理中 (${index + 1}/${files.length})...`;
+                                resolve(processedCanvas);
+                            } catch (error) {
+                                console.error('画像処理中にエラー:', file.name, error);
+                                reject(new Error(`画像処理エラー: ${file.name}`));
+                            }
+                        };
+                        img.onerror = () => {
+                            console.error('画像読み込みエラー:', file.name);
+                            reject(new Error(`画像読み込みエラー: ${file.name}`));
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.onerror = () => {
+                        console.error('ファイル読み込みエラー:', file.name);
+                        reject(new Error(`ファイル読み込みエラー: ${file.name}`));
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            try {
+                const results = await Promise.all(filePromises);
+                processedImages = results.filter(canvas => canvas !== null);
+
+                if (processedImages.length > 0) {
+                    drawFinalCombinedImage();
+                    statusMessage.textContent = `${processedImages.length}個の画像の処理が完了しました。`;
+                    
+                    // 画像処理完了後のUI更新
+                    canvasContainer.classList.remove('hidden');
+                    downloadButton.classList.remove('hidden');
+                    uploadMoreButton.classList.remove('hidden');
+                    actionButtonsContainer.classList.remove('hidden'); // Show button container
+                    dropArea.classList.add('hidden'); // 元のDropAreaを隠す
+
+                } else if (files.length > 0) {
+                    statusMessage.textContent = '有効な画像ファイルが見つかりませんでした。';
+                    dropArea.classList.remove('hidden'); // DropAreaは表示したまま
+                    actionButtonsContainer.classList.add('hidden');
+                } else { // files.length === 0 (ここには通常来ないが念のため)
+                    statusMessage.textContent = '画像をアップロードしてください。';
+                    dropArea.classList.remove('hidden');
+                    actionButtonsContainer.classList.add('hidden');
+                }
+            } catch (error) {
+                console.error('ファイル処理全体でエラー:', error);
+                statusMessage.textContent = `エラーが発生しました: ${error.message}`;
+                dropArea.classList.remove('hidden'); // エラー時もDropAreaは表示
+                actionButtonsContainer.classList.add('hidden');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        function processSingleImage(originalImage) {
+            return new Promise((resolve) => {
+                const w = originalImage.width;
+                const h = originalImage.height;
+                const smallCropConfig = CROP_PARAMETERS[0];
+                const cropCanvas1 = document.createElement('canvas');
+                const cropCtx1 = cropCanvas1.getContext('2d');
+                cropCanvas1.width = Math.floor(w * smallCropConfig.widthRatio);
+                cropCanvas1.height = Math.floor(h * smallCropConfig.heightRatio);
+                const sX1 = Math.floor(w * smallCropConfig.sourceXRatio);
+                const sY1 = Math.floor(h * smallCropConfig.sourceYRatio);
+                cropCtx1.drawImage(originalImage, sX1, sY1, cropCanvas1.width, cropCanvas1.height, 0, 0, cropCanvas1.width, cropCanvas1.height);
+
+                const stripBaseConfig = CROP_PARAMETERS[1];
+                const compositeCanvas = document.createElement('canvas');
+                const compositeCtx = compositeCanvas.getContext('2d');
+                compositeCanvas.width = w;
+                compositeCanvas.height = Math.floor(h * stripBaseConfig.heightRatio);
+                const sY2 = Math.floor(h * stripBaseConfig.sourceYRatio);
+                compositeCtx.drawImage(originalImage, 0, sY2, w, compositeCanvas.height, 0, 0, w, compositeCanvas.height);
+                const destX = (compositeCanvas.width - cropCanvas1.width) / 2;
+                const destY = (compositeCanvas.height - cropCanvas1.height) / 2;
+                compositeCtx.drawImage(cropCanvas1, destX, destY);
+                resolve(compositeCanvas);
+            });
+        }
+
+        function drawFinalCombinedImage() {
+            if (processedImages.length === 0) {
+                // このケースはhandleFilesで制御されるため、ここでは基本的に何もしないか、
+                // UIの一貫性を保つための最小限の処理に留める。
+                return;
+            }
+            const totalWidth = Math.max(...processedImages.map(imgCanvas => imgCanvas.width));
+            const totalHeight = processedImages.reduce((sum, imgCanvas) => sum + imgCanvas.height, 0);
+            mainCanvas.width = totalWidth;
+            mainCanvas.height = totalHeight;
+            mainCtx.clearRect(0, 0, totalWidth, totalHeight);
+            let currentY = 0;
+            processedImages.forEach(imgCanvas => {
+                mainCtx.drawImage(imgCanvas, 0, currentY);
+                currentY += imgCanvas.height;
+            });
+        }
+    </script>
+</body>
+</html>
